@@ -1,34 +1,33 @@
 /**
  ******************************************************************************
- * @file           : max_m10m.c
- * @brief          : MAX-M10M-00B GNSS Module Driver Implementation
+ * @file           : max_m10m_uart.c
+ * @brief          : MAX-M10M-00B GNSS Module UART Driver Implementation
  * @attention
- * Driver for u-blox MAX-M10M-00B GNSS module
+ * Driver for u-blox MAX-M10M-00B GNSS module via UART interface
  * Communication: UART2 @ 9600 baud, 8 data bits, 1 stop bit, no parity
  * Based on MAX-M10M-00B datasheet (UBX-22028884)
  ******************************************************************************
  */
 
-#include <max_m10m_uart.h>
+#include "max_m10m.h"
 #include <string.h>
 
 /* Private function prototypes */
-static void GNSS_SendUBXMessage(gnss_driver_t *driver, uint8_t class, uint8_t id,
-                                 const uint8_t *payload, uint16_t payload_len);
-static uint8_t GNSS_CalculateChecksum(const uint8_t *data, uint16_t len, uint8_t *ck_a, uint8_t *ck_b);
-static bool GNSS_ParseUBXMessage(gnss_driver_t *driver, const uint8_t *buffer, uint16_t length);
-static bool GNSS_ParseNAVPVT(gnss_driver_t *driver, const uint8_t *payload, uint16_t length);
-static uint32_t GNSS_ReadU32(const uint8_t *buffer);
-static int32_t GNSS_ReadI32(const uint8_t *buffer);
-static uint16_t GNSS_ReadU16(const uint8_t *buffer);
-static int16_t GNSS_ReadI16(const uint8_t *buffer);
+static void GNSS_UART_SendUBXMessage(gnss_uart_driver_t *driver, uint8_t class, uint8_t id,
+                                      const uint8_t *payload, uint16_t payload_len);
+static uint8_t GNSS_UART_CalculateChecksum(const uint8_t *data, uint16_t len, uint8_t *ck_a, uint8_t *ck_b);
+static bool GNSS_UART_ParseUBXMessage(gnss_uart_driver_t *driver, const uint8_t *buffer, uint16_t length);
+static bool GNSS_UART_ParseNAVPVT(gnss_uart_driver_t *driver, const uint8_t *payload, uint16_t length);
+static uint32_t GNSS_UART_ReadU32(const uint8_t *buffer);
+static int32_t GNSS_UART_ReadI32(const uint8_t *buffer);
+static uint16_t GNSS_UART_ReadU16(const uint8_t *buffer);
 
 /**
- * @brief Initialize GNSS driver and hardware
+ * @brief Initialize GNSS driver and hardware (UART interface)
  * @param driver Pointer to GNSS driver structure
  * @param huart UART handle
  */
-void GNSS_Init(gnss_driver_t *driver, UART_HandleTypeDef *huart)
+void GNSS_UART_Init(gnss_uart_driver_t *driver, UART_HandleTypeDef *huart)
 {
     if (driver == NULL || huart == NULL) {
         return;
@@ -43,8 +42,8 @@ void GNSS_Init(gnss_driver_t *driver, UART_HandleTypeDef *huart)
     driver->ack_received = false;
 
     /* Clear buffers */
-    memset(driver->rx_buffer, 0, MAX_M10M_RX_BUFFER_SIZE);
-    memset(driver->tx_buffer, 0, MAX_M10M_TX_BUFFER_SIZE);
+    memset(driver->rx_buffer, 0, GNSS_RX_BUFFER_SIZE);
+    memset(driver->tx_buffer, 0, GNSS_TX_BUFFER_SIZE);
     memset(&driver->pvt_data, 0, sizeof(ubx_nav_pvt_t));
 
     /* Power on GNSS module */
@@ -54,7 +53,7 @@ void GNSS_Init(gnss_driver_t *driver, UART_HandleTypeDef *huart)
     GNSS_HardwareReset();
 
     /* Request PVT data */
-    GNSS_RequestPVT(driver);
+    GNSS_UART_RequestPVT(driver);
 
     driver->state = GNSS_STATE_READY;
 }
@@ -96,8 +95,8 @@ void GNSS_PowerOff(void)
  * @brief Send UBX message via UART
  * Frame structure: [SYNC1][SYNC2][CLASS][ID][LEN_L][LEN_H][PAYLOAD][CK_A][CK_B]
  */
-static void GNSS_SendUBXMessage(gnss_driver_t *driver, uint8_t class, uint8_t id,
-                                 const uint8_t *payload, uint16_t payload_len)
+static void GNSS_UART_SendUBXMessage(gnss_uart_driver_t *driver, uint8_t class, uint8_t id,
+                                      const uint8_t *payload, uint16_t payload_len)
 {
     uint16_t idx = 0;
     uint8_t ck_a = 0, ck_b = 0;
@@ -125,9 +124,9 @@ static void GNSS_SendUBXMessage(gnss_driver_t *driver, uint8_t class, uint8_t id
     }
 
     /* Calculate checksum on class, id, length, and payload */
-    GNSS_CalculateChecksum(&driver->tx_buffer[2],
-                           2 + 2 + payload_len,  /* class + id + length fields + payload */
-                           &ck_a, &ck_b);
+    GNSS_UART_CalculateChecksum(&driver->tx_buffer[2],
+                                2 + 2 + payload_len,  /* class + id + length fields + payload */
+                                &ck_a, &ck_b);
 
     /* Add checksum */
     driver->tx_buffer[idx++] = ck_a;
@@ -140,7 +139,7 @@ static void GNSS_SendUBXMessage(gnss_driver_t *driver, uint8_t class, uint8_t id
 /**
  * @brief Calculate Fletcher checksum for UBX messages
  */
-static uint8_t GNSS_CalculateChecksum(const uint8_t *data, uint16_t len, uint8_t *ck_a, uint8_t *ck_b)
+static uint8_t GNSS_UART_CalculateChecksum(const uint8_t *data, uint16_t len, uint8_t *ck_a, uint8_t *ck_b)
 {
     *ck_a = 0;
     *ck_b = 0;
@@ -156,21 +155,21 @@ static uint8_t GNSS_CalculateChecksum(const uint8_t *data, uint16_t len, uint8_t
 /**
  * @brief Request NAV-PVT message from receiver
  */
-void GNSS_RequestPVT(gnss_driver_t *driver)
+void GNSS_UART_RequestPVT(gnss_uart_driver_t *driver)
 {
     if (driver == NULL) {
         return;
     }
 
     /* Send UBX-NAV-PVT poll request (no payload) */
-    GNSS_SendUBXMessage(driver, UBX_CLASS_NAV, UBX_NAV_PVT, NULL, 0);
+    GNSS_UART_SendUBXMessage(driver, UBX_CLASS_NAV, UBX_NAV_PVT, NULL, 0);
 }
 
 /**
  * @brief Set measurement rate (update rate)
  * @param rate_ms Measurement rate in milliseconds (e.g., 1000 for 1 Hz, 100 for 10 Hz)
  */
-void GNSS_SetMeasurementRate(gnss_driver_t *driver, uint16_t rate_ms)
+void GNSS_UART_SetMeasurementRate(gnss_uart_driver_t *driver, uint16_t rate_ms)
 {
     uint8_t payload[6];
 
@@ -186,14 +185,14 @@ void GNSS_SetMeasurementRate(gnss_driver_t *driver, uint16_t rate_ms)
     payload[4] = 0;          /* timeRef = 0 (UTC) */
     payload[5] = 0;
 
-    GNSS_SendUBXMessage(driver, UBX_CLASS_CFG, UBX_CFG_RATE, payload, 6);
+    GNSS_UART_SendUBXMessage(driver, UBX_CLASS_CFG, UBX_CFG_RATE, payload, 6);
 }
 
 /**
  * @brief Enable/Disable NMEA output
  * @param enable 1 to enable, 0 to disable
  */
-void GNSS_EnableNMEA(gnss_driver_t *driver, uint8_t enable)
+void GNSS_UART_EnableNMEA(gnss_uart_driver_t *driver, uint8_t enable)
 {
     uint8_t payload[3];
 
@@ -207,13 +206,13 @@ void GNSS_EnableNMEA(gnss_driver_t *driver, uint8_t enable)
     payload[2] = 0;
 
     /* Send for each message type */
-    GNSS_SendUBXMessage(driver, UBX_CLASS_CFG, UBX_CFG_MSG, payload, 3);
+    GNSS_UART_SendUBXMessage(driver, UBX_CLASS_CFG, UBX_CFG_MSG, payload, 3);
 }
 
 /**
  * @brief Parse received UBX message
  */
-static bool GNSS_ParseUBXMessage(gnss_driver_t *driver, const uint8_t *buffer, uint16_t length)
+static bool GNSS_UART_ParseUBXMessage(gnss_uart_driver_t *driver, const uint8_t *buffer, uint16_t length)
 {
     uint8_t ck_a = 0, ck_b = 0;
     uint8_t class, id;
@@ -238,14 +237,14 @@ static bool GNSS_ParseUBXMessage(gnss_driver_t *driver, const uint8_t *buffer, u
     }
 
     /* Verify checksum */
-    GNSS_CalculateChecksum(&buffer[2], payload_len + 2, &ck_a, &ck_b);
+    GNSS_UART_CalculateChecksum(&buffer[2], payload_len + 2, &ck_a, &ck_b);
     if (ck_a != buffer[length - 2] || ck_b != buffer[length - 1]) {
         return false;
     }
 
     /* Parse specific message types */
     if (class == UBX_CLASS_NAV && id == UBX_NAV_PVT) {
-        return GNSS_ParseNAVPVT(driver, &buffer[6], payload_len);
+        return GNSS_UART_ParseNAVPVT(driver, &buffer[6], payload_len);
     } else if (class == UBX_CLASS_ACK) {
         driver->ack_received = true;
         return true;
@@ -257,7 +256,7 @@ static bool GNSS_ParseUBXMessage(gnss_driver_t *driver, const uint8_t *buffer, u
 /**
  * @brief Parse NAV-PVT message
  */
-static bool GNSS_ParseNAVPVT(gnss_driver_t *driver, const uint8_t *payload, uint16_t length)
+static bool GNSS_UART_ParseNAVPVT(gnss_uart_driver_t *driver, const uint8_t *payload, uint16_t length)
 {
     if (length < 92) {  /* Minimum NAV-PVT payload size */
         return false;
@@ -266,10 +265,10 @@ static bool GNSS_ParseNAVPVT(gnss_driver_t *driver, const uint8_t *payload, uint
     uint16_t idx = 0;
 
     /* Parse all fields according to datasheet */
-    driver->pvt_data.iTOW = GNSS_ReadU32(&payload[idx]);
+    driver->pvt_data.iTOW = GNSS_UART_ReadU32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.year = GNSS_ReadU16(&payload[idx]);
+    driver->pvt_data.year = GNSS_UART_ReadU16(&payload[idx]);
     idx += 2;
 
     driver->pvt_data.month = payload[idx++];
@@ -280,10 +279,10 @@ static bool GNSS_ParseNAVPVT(gnss_driver_t *driver, const uint8_t *payload, uint
 
     driver->pvt_data.valid = payload[idx++];
 
-    driver->pvt_data.tAcc = GNSS_ReadU32(&payload[idx]);
+    driver->pvt_data.tAcc = GNSS_UART_ReadU32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.nano = GNSS_ReadI32(&payload[idx]);
+    driver->pvt_data.nano = GNSS_UART_ReadI32(&payload[idx]);
     idx += 4;
 
     driver->pvt_data.fixType = payload[idx++];
@@ -292,51 +291,51 @@ static bool GNSS_ParseNAVPVT(gnss_driver_t *driver, const uint8_t *payload, uint
 
     idx += 1;  /* Reserved byte */
 
-    driver->pvt_data.lon = GNSS_ReadI32(&payload[idx]);
+    driver->pvt_data.lon = GNSS_UART_ReadI32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.lat = GNSS_ReadI32(&payload[idx]);
+    driver->pvt_data.lat = GNSS_UART_ReadI32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.height = GNSS_ReadI32(&payload[idx]);
+    driver->pvt_data.height = GNSS_UART_ReadI32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.hMSL = GNSS_ReadI32(&payload[idx]);
+    driver->pvt_data.hMSL = GNSS_UART_ReadI32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.hAcc = GNSS_ReadU32(&payload[idx]);
+    driver->pvt_data.hAcc = GNSS_UART_ReadU32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.vAcc = GNSS_ReadU32(&payload[idx]);
+    driver->pvt_data.vAcc = GNSS_UART_ReadU32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.velN = GNSS_ReadI32(&payload[idx]);
+    driver->pvt_data.velN = GNSS_UART_ReadI32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.velE = GNSS_ReadI32(&payload[idx]);
+    driver->pvt_data.velE = GNSS_UART_ReadI32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.velD = GNSS_ReadI32(&payload[idx]);
+    driver->pvt_data.velD = GNSS_UART_ReadI32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.gSpeed = GNSS_ReadI32(&payload[idx]);
+    driver->pvt_data.gSpeed = GNSS_UART_ReadI32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.heading = GNSS_ReadI32(&payload[idx]);
+    driver->pvt_data.heading = GNSS_UART_ReadI32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.sAcc = GNSS_ReadU32(&payload[idx]);
+    driver->pvt_data.sAcc = GNSS_UART_ReadU32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.headingAcc = GNSS_ReadU32(&payload[idx]);
+    driver->pvt_data.headingAcc = GNSS_UART_ReadU32(&payload[idx]);
     idx += 4;
 
-    driver->pvt_data.pDOP = GNSS_ReadU16(&payload[idx]);
+    driver->pvt_data.pDOP = GNSS_UART_ReadU16(&payload[idx]);
     idx += 2;
 
     idx += 6;  /* Reserved bytes */
 
-    driver->pvt_data.headVeh = GNSS_ReadI32(&payload[idx]);
+    driver->pvt_data.headVeh = GNSS_UART_ReadI32(&payload[idx]);
     idx += 4;
 
     driver->new_data_available = true;
@@ -353,9 +352,9 @@ static bool GNSS_ParseNAVPVT(gnss_driver_t *driver, const uint8_t *payload, uint
 /**
  * @brief UART receive callback for character-by-character reception
  */
-void GNSS_UART_RxCallback(gnss_driver_t *driver, uint8_t data)
+void GNSS_UART_RxCallback(gnss_uart_driver_t *driver, uint8_t data)
 {
-    if (driver == NULL || driver->rx_index >= MAX_M10M_RX_BUFFER_SIZE) {
+    if (driver == NULL || driver->rx_index >= GNSS_RX_BUFFER_SIZE) {
         driver->rx_index = 0;
         return;
     }
@@ -385,14 +384,14 @@ void GNSS_UART_RxCallback(gnss_driver_t *driver, uint8_t data)
 /**
  * @brief Process received data and parse messages
  */
-void GNSS_Process(gnss_driver_t *driver)
+void GNSS_UART_Process(gnss_uart_driver_t *driver)
 {
     if (driver == NULL || driver->rx_length == 0) {
         return;
     }
 
     /* Parse the received message */
-    GNSS_ParseUBXMessage(driver, driver->rx_buffer, driver->rx_length);
+    GNSS_UART_ParseUBXMessage(driver, driver->rx_buffer, driver->rx_length);
 
     /* Clear length to indicate message is processed */
     driver->rx_length = 0;
@@ -402,7 +401,7 @@ void GNSS_Process(gnss_driver_t *driver)
 /**
  * @brief Get parsed PVT data
  */
-bool GNSS_GetPVT(gnss_driver_t *driver, ubx_nav_pvt_t *pvt)
+bool GNSS_UART_GetPVT(gnss_uart_driver_t *driver, ubx_nav_pvt_t *pvt)
 {
     if (driver == NULL || pvt == NULL || !driver->new_data_available) {
         return false;
@@ -416,7 +415,7 @@ bool GNSS_GetPVT(gnss_driver_t *driver, ubx_nav_pvt_t *pvt)
 /**
  * @brief Get current fix type
  */
-gnss_fix_type_t GNSS_GetFixType(gnss_driver_t *driver)
+gnss_fix_type_t GNSS_UART_GetFixType(gnss_uart_driver_t *driver)
 {
     if (driver == NULL) {
         return FIX_TYPE_NO_FIX;
@@ -428,7 +427,7 @@ gnss_fix_type_t GNSS_GetFixType(gnss_driver_t *driver)
 /**
  * @brief Get number of satellites used
  */
-uint8_t GNSS_GetSatelliteCount(gnss_driver_t *driver)
+uint8_t GNSS_UART_GetSatelliteCount(gnss_uart_driver_t *driver)
 {
     if (driver == NULL) {
         return 0;
@@ -441,13 +440,13 @@ uint8_t GNSS_GetSatelliteCount(gnss_driver_t *driver)
  * @brief Get position (latitude and longitude in degrees)
  * Internal storage uses 1e-7 degree format
  */
-bool GNSS_GetPosition(gnss_driver_t *driver, double *lat, double *lon)
+bool GNSS_UART_GetPosition(gnss_uart_driver_t *driver, double *lat, double *lon)
 {
     if (driver == NULL || lat == NULL || lon == NULL) {
         return false;
     }
 
-    if (!GNSS_IsFixValid(driver)) {
+    if (!GNSS_UART_IsFixValid(driver)) {
         return false;
     }
 
@@ -461,7 +460,7 @@ bool GNSS_GetPosition(gnss_driver_t *driver, double *lat, double *lon)
  * @brief Get altitude in meters
  * Internal storage uses mm, so divide by 1000
  */
-double GNSS_GetAltitude(gnss_driver_t *driver)
+double GNSS_UART_GetAltitude(gnss_uart_driver_t *driver)
 {
     if (driver == NULL) {
         return 0.0;
@@ -471,9 +470,33 @@ double GNSS_GetAltitude(gnss_driver_t *driver)
 }
 
 /**
+ * @brief Get ground speed in m/s
+ */
+double GNSS_UART_GetSpeed(gnss_uart_driver_t *driver)
+{
+    if (driver == NULL) {
+        return 0.0;
+    }
+
+    return driver->pvt_data.gSpeed / 1000.0;
+}
+
+/**
+ * @brief Get heading in degrees
+ */
+double GNSS_UART_GetHeading(gnss_uart_driver_t *driver)
+{
+    if (driver == NULL) {
+        return 0.0;
+    }
+
+    return driver->pvt_data.heading / 1e5;
+}
+
+/**
  * @brief Check if position fix is valid
  */
-bool GNSS_IsFixValid(gnss_driver_t *driver)
+bool GNSS_UART_IsFixValid(gnss_uart_driver_t *driver)
 {
     if (driver == NULL) {
         return false;
@@ -483,22 +506,18 @@ bool GNSS_IsFixValid(gnss_driver_t *driver)
 }
 
 /* Helper functions for little-endian data reading */
-static uint32_t GNSS_ReadU32(const uint8_t *buffer)
+static uint32_t GNSS_UART_ReadU32(const uint8_t *buffer)
 {
     return (buffer[0]) | (buffer[1] << 8) | (buffer[2] << 16) | (buffer[3] << 24);
 }
 
-static int32_t GNSS_ReadI32(const uint8_t *buffer)
+static int32_t GNSS_UART_ReadI32(const uint8_t *buffer)
 {
-    return (int32_t)GNSS_ReadU32(buffer);
+    return (int32_t)GNSS_UART_ReadU32(buffer);
 }
 
-static uint16_t GNSS_ReadU16(const uint8_t *buffer)
+static uint16_t GNSS_UART_ReadU16(const uint8_t *buffer)
 {
     return (buffer[0]) | (buffer[1] << 8);
 }
 
-static int16_t GNSS_ReadI16(const uint8_t *buffer)
-{
-    return (int16_t)GNSS_ReadU16(buffer);
-}
