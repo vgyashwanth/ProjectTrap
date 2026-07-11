@@ -63,10 +63,24 @@ void Error_Handler(void);
 #define GNSS_RST_GPIO_Port GPIOA
 #define GNSS_EN_Pin GPIO_PIN_7
 #define GNSS_EN_GPIO_Port GPIOA
+#define LTE_PWR_KEY_Pin GPIO_PIN_1
+#define LTE_PWR_KEY_GPIO_Port GPIOB
 #define GNSS_TX2_Pin GPIO_PIN_8
 #define GNSS_TX2_GPIO_Port GPIOA
 #define GNSS_VBCKP_Pin GPIO_PIN_6
 #define GNSS_VBCKP_GPIO_Port GPIOC
+#define LTE_RST_Pin GPIO_PIN_15
+#define LTE_RST_GPIO_Port GPIOA
+#define LTE_DCD_Pin GPIO_PIN_3
+#define LTE_DCD_GPIO_Port GPIOB
+#define LTE_RI_Pin GPIO_PIN_4
+#define LTE_RI_GPIO_Port GPIOB
+#define LTE_TX1_Pin GPIO_PIN_6
+#define LTE_TX1_GPIO_Port GPIOB
+#define LTE_TX2_Pin GPIO_PIN_7
+#define LTE_TX2_GPIO_Port GPIOB
+#define LTE_PWR_EN_Pin GPIO_PIN_8
+#define LTE_PWR_EN_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
