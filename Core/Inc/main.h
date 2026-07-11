@@ -57,6 +57,16 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define GNSS_RX2_Pin GPIO_PIN_5
+#define GNSS_RX2_GPIO_Port GPIOA
+#define GNSS_RST_Pin GPIO_PIN_6
+#define GNSS_RST_GPIO_Port GPIOA
+#define GNSS_EN_Pin GPIO_PIN_7
+#define GNSS_EN_GPIO_Port GPIOA
+#define GNSS_TX2_Pin GPIO_PIN_8
+#define GNSS_TX2_GPIO_Port GPIOA
+#define GNSS_VBCKP_Pin GPIO_PIN_6
+#define GNSS_VBCKP_GPIO_Port GPIOC
 
 /* USER CODE BEGIN Private defines */
 
